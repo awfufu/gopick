@@ -1,0 +1,15 @@
+http:
+  host: 127.0.0.1
+  port: 22800
+  read_timeout: 15s
+  write_timeout: 15s
+  shutdown_timeout: 10s
+
+maiyatian:
+  base_url: https://saas.maiyatian.com
+  api_key: ""
+  api_secret: ""
+  cookie: 'your-maiyatian-cookie'
+  user_agent: 'your-user-agent'
+  timeout: 15s
+  webhook_key: ""
