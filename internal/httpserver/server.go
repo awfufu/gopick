@@ -15,30 +15,38 @@ import (
 	"github.com/awfufu/gopick/internal/service"
 )
 
+type wsStatusProvider interface {
+	Status() domain.WSStatus
+}
+
 type Server struct {
 	server       *http.Server
 	logger       *slog.Logger
 	orderService *service.OrderService
 	httpConfig   config.HTTPConfig
+	wsStatus     wsStatusProvider
 }
 
 type statusResponse struct {
-	Service string   `json:"service"`
-	Status  string   `json:"status"`
-	Now     string   `json:"now"`
-	Routes  []string `json:"routes"`
+	Service string          `json:"service"`
+	Status  string          `json:"status"`
+	Now     string          `json:"now"`
+	Routes  []string        `json:"routes"`
+	WS      domain.WSStatus `json:"ws"`
 }
 
-func New(cfg config.HTTPConfig, logger *slog.Logger, orderService *service.OrderService) *Server {
+func New(cfg config.HTTPConfig, logger *slog.Logger, orderService *service.OrderService, wsStatus wsStatusProvider) *Server {
 	s := &Server{
 		logger:       logger,
 		orderService: orderService,
 		httpConfig:   cfg,
+		wsStatus:     wsStatus,
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.handleHealth)
 	mux.HandleFunc("GET /status", s.handleStatus)
+	mux.HandleFunc("GET /order-context", s.handleOrderContext)
 	mux.HandleFunc("GET /list-orders", s.handleListOrders)
 	mux.HandleFunc("GET /list-orders/{status}", s.handleListOrders)
 	mux.HandleFunc("GET /all-orders", s.handleAllOrders)
@@ -76,6 +84,11 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
+	wsStatus := domain.WSStatus{}
+	if s.wsStatus != nil {
+		wsStatus = s.wsStatus.Status()
+	}
+
 	writeJSON(w, http.StatusOK, statusResponse{
 		Service: "gopick",
 		Status:  "ready",
@@ -83,12 +96,28 @@ func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
 		Routes: []string{
 			"GET /health",
 			"GET /status",
+			"GET /order-context",
 			"GET /list-orders",
 			"GET /list-orders/{status}",
 			"GET /all-orders",
 			"GET /all-orders/{date}",
 		},
+		WS: wsStatus,
 	})
+}
+
+func (s *Server) handleOrderContext(w http.ResponseWriter, r *http.Request) {
+	contextInfo, err := s.orderService.GetOrderContext(r.Context())
+	if err != nil {
+		s.logger.Error("get order context failed", "error", err)
+		writeJSON(w, http.StatusBadGateway, map[string]any{
+			"ok":    false,
+			"error": err.Error(),
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, contextInfo)
 }
 
 func (s *Server) handleListOrders(w http.ResponseWriter, r *http.Request) {

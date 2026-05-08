@@ -12,6 +12,7 @@ import (
 type Config struct {
 	HTTP      HTTPConfig      `yaml:"http"`
 	Maiyatian MaiyatianConfig `yaml:"maiyatian"`
+	Upload    UploadConfig    `yaml:"upload"`
 }
 
 type HTTPConfig struct {
@@ -23,13 +24,15 @@ type HTTPConfig struct {
 }
 
 type MaiyatianConfig struct {
-	BaseURL    string        `yaml:"base_url"`
-	APIKey     string        `yaml:"api_key"`
-	APISecret  string        `yaml:"api_secret"`
-	Cookie     string        `yaml:"cookie"`
-	UserAgent  string        `yaml:"user_agent"`
-	Timeout    time.Duration `yaml:"timeout"`
-	WebhookKey string        `yaml:"webhook_key"`
+	Cookie    string        `yaml:"cookie"`
+	UserAgent string        `yaml:"user_agent"`
+	Timeout   time.Duration `yaml:"timeout"`
+}
+
+type UploadConfig struct {
+	BaseURL string        `yaml:"base_url"`
+	APIKey  string        `yaml:"api_key"`
+	Timeout time.Duration `yaml:"timeout"`
 }
 
 func Load(path string) (Config, error) {
@@ -42,9 +45,13 @@ func Load(path string) (Config, error) {
 			ShutdownTimeout: 10 * time.Second,
 		},
 		Maiyatian: MaiyatianConfig{
-			BaseURL:   "https://saas.maiyatian.com",
 			UserAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
 			Timeout:   15 * time.Second,
+		},
+		Upload: UploadConfig{
+			BaseURL: "http://127.0.0.1:8850",
+			APIKey:  "ms_fece8dc13ae84ef8b39ff827c4bfe09cebcc422aa862ab1e",
+			Timeout: 15 * time.Second,
 		},
 	}
 
@@ -83,15 +90,6 @@ func mergeConfig(dst *Config, src Config) {
 		dst.HTTP.ShutdownTimeout = src.HTTP.ShutdownTimeout
 	}
 
-	if value := strings.TrimSpace(src.Maiyatian.BaseURL); value != "" {
-		dst.Maiyatian.BaseURL = strings.TrimRight(value, "/")
-	}
-	if value := strings.TrimSpace(src.Maiyatian.APIKey); value != "" {
-		dst.Maiyatian.APIKey = value
-	}
-	if value := strings.TrimSpace(src.Maiyatian.APISecret); value != "" {
-		dst.Maiyatian.APISecret = value
-	}
 	if value := strings.TrimSpace(src.Maiyatian.Cookie); value != "" {
 		dst.Maiyatian.Cookie = value
 	}
@@ -101,7 +99,14 @@ func mergeConfig(dst *Config, src Config) {
 	if src.Maiyatian.Timeout > 0 {
 		dst.Maiyatian.Timeout = src.Maiyatian.Timeout
 	}
-	if value := strings.TrimSpace(src.Maiyatian.WebhookKey); value != "" {
-		dst.Maiyatian.WebhookKey = value
+
+	if value := strings.TrimSpace(src.Upload.BaseURL); value != "" {
+		dst.Upload.BaseURL = strings.TrimRight(value, "/")
+	}
+	if value := strings.TrimSpace(src.Upload.APIKey); value != "" {
+		dst.Upload.APIKey = value
+	}
+	if src.Upload.Timeout > 0 {
+		dst.Upload.Timeout = src.Upload.Timeout
 	}
 }

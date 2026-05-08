@@ -22,3 +22,7 @@ func (s *OrderService) ListOrders(ctx context.Context, status domain.OrderStatus
 func (s *OrderService) ListAllOrders(ctx context.Context, date string) ([]domain.Order, error) {
 	return s.maiyatianClient.ListAllOrders(ctx, date)
 }
+
+func (s *OrderService) GetOrderContext(ctx context.Context) (domain.OrderContext, error) {
+	return s.maiyatianClient.GetOrderContext(ctx)
+}

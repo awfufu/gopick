@@ -6,10 +6,11 @@ http:
   shutdown_timeout: 10s
 
 maiyatian:
-  base_url: https://saas.maiyatian.com
-  api_key: ""
-  api_secret: ""
   cookie: 'your-maiyatian-cookie'
   user_agent: 'your-user-agent'
   timeout: 15s
-  webhook_key: ""
+
+upload:
+  base_url: http://127.0.0.1:8850
+  api_key: your-backend-apikey
+  timeout: 15s

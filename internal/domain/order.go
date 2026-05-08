@@ -48,6 +48,11 @@ type Delivery struct {
 	RiderName        string `json:"riderName,omitempty"`
 }
 
+type OrderContext struct {
+	MerchantID string `json:"merchantId"`
+	AccountID  string `json:"accountId"`
+}
+
 type OrderStatus string
 
 const (

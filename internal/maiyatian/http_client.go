@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -18,11 +19,11 @@ import (
 type HTTPClient struct {
 	baseURL string
 	client  *http.Client
-	apiKey  string
-	secret  string
 	cookie  string
 	ua      string
 }
+
+const maiyatianBaseURL = "https://saas.maiyatian.com"
 
 type rawListResponse struct {
 	Errno   int            `json:"errno"`
@@ -130,12 +131,12 @@ type rawDetailGoods struct {
 }
 
 var htmlTagPattern = regexp.MustCompile(`<[^>]+>`)
+var merchantIDPattern = regexp.MustCompile(`var\s+gMerchantId\s*=\s*'([^']+)'`)
+var accountIDPattern = regexp.MustCompile(`var\s+gAccountId\s*=\s*'([^']+)'`)
 
 func NewHTTPClient(cfg config.MaiyatianConfig) *HTTPClient {
 	return &HTTPClient{
-		baseURL: cfg.BaseURL,
-		apiKey:  cfg.APIKey,
-		secret:  cfg.APISecret,
+		baseURL: maiyatianBaseURL,
 		cookie:  cfg.Cookie,
 		ua:      cfg.UserAgent,
 		client: &http.Client{
@@ -156,12 +157,6 @@ func (c *HTTPClient) ListOrders(ctx context.Context, status domain.OrderStatus) 
 	}
 
 	applyDefaultHeaders(req, c)
-	if c.apiKey != "" {
-		req.Header.Set("X-API-Key", c.apiKey)
-	}
-	if c.secret != "" {
-		req.Header.Set("X-API-Secret", c.secret)
-	}
 
 	resp, err := c.client.Do(req)
 	if err != nil {
@@ -196,6 +191,79 @@ func (c *HTTPClient) ListOrders(ctx context.Context, status domain.OrderStatus) 
 	}
 
 	return orders, nil
+}
+
+func (c *HTTPClient) GetOrderContext(ctx context.Context) (domain.OrderContext, error) {
+	endpoint := fmt.Sprintf("%s/order/", c.baseURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return domain.OrderContext{}, err
+	}
+
+	applyOrderPageHeaders(req, c)
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return domain.OrderContext{}, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= http.StatusBadRequest {
+		return domain.OrderContext{}, fmt.Errorf("maiyatian order page returned status %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return domain.OrderContext{}, fmt.Errorf("read maiyatian order page: %w", err)
+	}
+
+	html := string(body)
+	merchantID := extractFirstSubmatch(merchantIDPattern, html)
+	accountID := extractFirstSubmatch(accountIDPattern, html)
+	if merchantID == "" || accountID == "" {
+		return domain.OrderContext{}, fmt.Errorf("failed to extract merchant/account id from maiyatian order page")
+	}
+
+	return domain.OrderContext{
+		MerchantID: merchantID,
+		AccountID:  accountID,
+	}, nil
+}
+
+func (c *HTTPClient) GetOrderByID(ctx context.Context, id string) (domain.Order, error) {
+	detail, err := c.fetchOrderDetail(ctx, id)
+	if err != nil {
+		return domain.Order{}, err
+	}
+
+	platform := normalizePlatformName(detail.ChannelTagName)
+	shopAddress := readPreferredShopAddressFromDetail(detail)
+	order := domain.Order{
+		ID:                    strings.TrimSpace(asString(detail.ID)),
+		ShopID:                firstNonEmptyString(strings.TrimSpace(asString(detail.ShopID)), strings.TrimSpace(asString(detail.MerchantID))),
+		City:                  maxInt(0, parseInt(detail.City)),
+		Platform:              platform,
+		DailyPlatformSequence: parseInt(detail.SourceSN),
+		OrderNo:               strings.TrimSpace(asString(detail.SourceID)),
+		OrderTime:             parseOrderTime(detail.OrderTime),
+		UserAddress:           firstNonEmptyString(detail.MapAddress, detail.Address),
+		RawShopName:           readPreferredShopNameFromDetail(detail),
+		ShopAddress:           shopAddress,
+		RawShopAddress:        shopAddress,
+		IsSubscribe:           parseBool(detail.IsSubscribe),
+		CompletedAt:           formatUnixTimestamp(detail.FinishedTime),
+		Longitude:             parseFloat(detail.Longitude),
+		Latitude:              parseFloat(detail.Latitude),
+		Status:                stripHTML(detail.Tips),
+		DeliveryDeadline:      formatDeadline(detail.DeliveryTime),
+		DeliveryTimeRange:     strings.TrimSpace(detail.DeliveryTimeFormat),
+		DistanceKM:            maxFloat(0, parseFloat(detail.DeliveryDistance)/1000),
+		DistanceIsLinear:      false,
+		Items:                 []domain.OrderItem{},
+	}
+
+	applyDetailToOrder(&order, detail)
+	return order, nil
 }
 
 func (c *HTTPClient) ListAllOrders(ctx context.Context, date string) ([]domain.Order, error) {
@@ -355,6 +423,15 @@ func applyDefaultHeaders(req *http.Request, client *HTTPClient) {
 	req.Header.Set("X-Requested-With", "XMLHttpRequest")
 	req.Header.Set("Referer", client.baseURL+"/order/")
 	req.Header.Set("M-Appkey", "fe_com.sankuai.dap.mytstats")
+	req.Header.Set("User-Agent", client.ua)
+	if client.cookie != "" {
+		req.Header.Set("Cookie", client.cookie)
+	}
+}
+
+func applyOrderPageHeaders(req *http.Request, client *HTTPClient) {
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
+	req.Header.Set("Referer", client.baseURL+"/query/")
 	req.Header.Set("User-Agent", client.ua)
 	if client.cookie != "" {
 		req.Header.Set("Cookie", client.cookie)
@@ -775,6 +852,14 @@ func firstNonNil(values ...any) any {
 		}
 	}
 	return nil
+}
+
+func extractFirstSubmatch(pattern *regexp.Regexp, text string) string {
+	match := pattern.FindStringSubmatch(text)
+	if len(match) < 2 {
+		return ""
+	}
+	return strings.TrimSpace(match[1])
 }
 
 func firstNonEmptyString(values ...string) string {
