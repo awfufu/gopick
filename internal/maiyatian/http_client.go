@@ -111,7 +111,7 @@ type rawDetailOrder struct {
 	Tips               string           `json:"tips"`
 	IsSubscribe        any              `json:"is_subscribe"`
 	Extend             rawOrderExtend   `json:"extend"`
-	Delivery           rawDelivery      `json:"delivery"`
+	Delivery           any              `json:"delivery"`
 	Fee                rawDetailFee     `json:"fee"`
 	Goods              []rawDetailGoods `json:"goods"`
 	Shop               rawOrderShop     `json:"shop"`
@@ -493,8 +493,10 @@ func applyDetailToOrder(order *domain.Order, detail rawDetailOrder) {
 	if value := strings.TrimSpace(asString(detail.ID)); value != "" {
 		order.ID = value
 	}
-	if value := firstNonEmptyString(strings.TrimSpace(asString(detail.Delivery.LogisticID)), strings.TrimSpace(order.LogisticID)); value != "" {
-		order.LogisticID = value
+	if detailDelivery, ok := decodeRawDelivery(detail.Delivery); ok {
+		if value := firstNonEmptyString(strings.TrimSpace(asString(detailDelivery.LogisticID)), strings.TrimSpace(order.LogisticID)); value != "" {
+			order.LogisticID = value
+		}
 	}
 	if value := parseOrderTime(detail.OrderTime); value != "" {
 		order.OrderTime = value
@@ -534,7 +536,7 @@ func applyDetailToOrder(order *domain.Order, detail rawDetailOrder) {
 		order.DeliveryTimeRange = value
 	}
 
-	if delivery := mapDetailDelivery(detail.Delivery); delivery != nil {
+	if delivery := mapDetailDeliveryFromAny(detail.Delivery); delivery != nil {
 		order.Delivery = delivery
 	}
 
@@ -549,6 +551,14 @@ func applyDetailToOrder(order *domain.Order, detail rawDetailOrder) {
 	if len(items) > 0 {
 		order.Items = items
 	}
+}
+
+func mapDetailDeliveryFromAny(value any) *domain.Delivery {
+	raw, ok := decodeRawDelivery(value)
+	if !ok {
+		return nil
+	}
+	return mapDetailDelivery(raw)
 }
 
 func mapDetailDelivery(raw rawDelivery) *domain.Delivery {
@@ -574,6 +584,33 @@ func mapDetailDelivery(raw rawDelivery) *domain.Delivery {
 		Track:            track,
 		RiderName:        riderName,
 	}
+}
+
+func decodeRawDelivery(value any) (rawDelivery, bool) {
+	if value == nil {
+		return rawDelivery{}, false
+	}
+	if boolValue, ok := value.(bool); ok && !boolValue {
+		return rawDelivery{}, false
+	}
+	raw, ok := value.(rawDelivery)
+	if ok {
+		return raw, true
+	}
+	mapValue, ok := value.(map[string]any)
+	if !ok {
+		return rawDelivery{}, false
+	}
+	return rawDelivery{
+		LogisticID:   mapValue["logistic_id"],
+		LogisticName: strings.TrimSpace(asString(mapValue["logistic_name"])),
+		DeliveryName: strings.TrimSpace(asString(mapValue["delivery_name"])),
+		Track:        strings.TrimSpace(asString(mapValue["track"])),
+		SendFee:      mapValue["send_fee"],
+		Tip:          mapValue["tip"],
+		PremiumFee:   mapValue["premium_fee"],
+		PickupTime:   mapValue["pickup_time"],
+	}, true
 }
 
 func parseDetailAmountFields(platform string, fee rawDetailFee) (actualPaid, expectedIncome, platformCommission int, hasAmount bool) {
